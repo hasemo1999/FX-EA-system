@@ -1,0 +1,23 @@
+{
+  "input_dir": "/mnt/data/run_24m_usdjpy/backtest_input",
+  "output_dir": "/mnt/data/run_24m_usdjpy/bt_best_24h_static_tp2.0",
+  "tz": "UTC",
+  "tz_display": "Asia/Tokyo",
+  "low_tf": "5T",
+  "ema_fast": 9,
+  "ema_slow": 21,
+  "vol_ratio_th": 1.5,
+  "friday_close_time": "23:59",
+  "stop_mode": "static",
+  "stop_pts": 1.0,
+  "tp_mode": "static",
+  "tp_pts": 2.0,
+  "direction": "long",
+  "use_mtf": true,
+  "higher_tf_rule": "60T",
+  "spread_pts": 0.02,
+  "slippage_pts": 0.01,
+  "commission_value": 0.0,
+  "start_date": "2023-01-01",
+  "end_date": "2024-12-31"
+}

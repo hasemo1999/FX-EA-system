@@ -26,5 +26,9 @@
     "use_atr_tp": false,
     "atr_multiplier": 2.0,
     "exclude_news": false,
-    "news_exclusion_minutes": 30
+    "news_exclusion_minutes": 30,
+    "news_exclude_csv": "news_exclude_test.csv",
+    "use_slope_filter": false,
+    "use_breakeven": false,
+    "breakeven_r": 0.5
 }

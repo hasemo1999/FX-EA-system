@@ -1,0 +1,66 @@
+{
+    "input_dir": "C:\\Users\\bnr39\\OneDrive\\EAデータ　CSV\\バックテスト素材",
+    "output_dir": "C:\\Users\\bnr39\\OneDrive\\EAデータ　CSV\\バックテスト結果",
+    "tz": "UTC",
+    "low_tf": "5T",
+    "session_start": "01:00",
+    "session_end": "09:00",
+    "ema_fast": 9,
+    "ema_slow": 21,
+    "vol_ratio_th": 1.5,
+    "stop_pts": 1.0,
+    "tp_pts": 2.2,
+    "point_value": 1.0,
+    "wf_splits": 7,
+    "use_mtf": true,
+    "higher_tf_mode": "resample",
+    "higher_tf_rule": "60T",
+    "higher_tf_csv_dir": "C:\\Users\\bnr39\\OneDrive\\EAデータ　CSV\\バックテスト素材",
+    "direction": "long",
+    "spread_pts": 0.02,
+    "slippage_pts": 0.01,
+    "commission_value": 0.0,
+    "start_date": "2023-01-01",
+    "end_date": "2024-12-31",
+    "friday_close_time": "06:30",
+    "use_atr_tp": false,
+    "atr_multiplier": 2.0,
+    "exclude_news": false,
+    "news_exclusion_minutes": 30,
+    "sweep_config": {
+        "enabled": true,
+        "vol_ratio_th_range": [
+            1.3,
+            1.5,
+            1.7
+        ],
+        "tp_modes": [
+            "static",
+            "atr"
+        ],
+        "tp_pts_range": [
+            2.0,
+            2.2,
+            2.5
+        ],
+        "atr_multiplier_range": [
+            1.8,
+            2.0,
+            2.2
+        ],
+        "session_ranges": [
+            {
+                "start": "01:00",
+                "end": "09:00"
+            },
+            {
+                "start": "09:00",
+                "end": "18:00"
+            },
+            {
+                "start": "13:00",
+                "end": "20:00"
+            }
+        ]
+    }
+}

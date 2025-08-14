@@ -145,6 +145,84 @@ def _session_mask(idx, start="09:00", end="15:00", friday_close_time="15:05"):
     # 金曜日以外は通常時間、金曜日は特別時間
     return (~friday_mask & normal_session) | (friday_mask & friday_session)
 
+
+def _load_news_exclusions(news_csv_path, exclusion_minutes=30, tz="UTC"):
+    """ニュース除外時刻の読み込み"""
+    if not news_csv_path or not os.path.exists(news_csv_path):
+        return []
+    
+    try:
+        news_df = pd.read_csv(news_csv_path)
+        # 時刻カラムの推定
+        time_cols = [col for col in news_df.columns if any(keyword in col.lower() for keyword in ['time', 'date', 'timestamp'])]
+        if not time_cols:
+            print(f"Warning: No time column found in {news_csv_path}")
+            return []
+        
+        time_col = time_cols[0]
+        news_times = pd.to_datetime(news_df[time_col])
+        
+        # タイムゾーンを設定
+        if news_times.dt.tz is None:
+            news_times = news_times.dt.tz_localize(tz)
+        else:
+            news_times = news_times.dt.tz_convert(tz)
+        
+        # 除外期間の計算（前後exclusion_minutes分）
+        exclusion_periods = []
+        for news_time in news_times:
+            start_time = news_time - pd.Timedelta(minutes=exclusion_minutes)
+            end_time = news_time + pd.Timedelta(minutes=exclusion_minutes)
+            exclusion_periods.append((start_time, end_time))
+        
+        return exclusion_periods
+    except Exception as e:
+        print(f"Warning: Failed to load news exclusions from {news_csv_path}: {e}")
+        return []
+
+
+def _is_news_exclusion_time(timestamp, exclusion_periods):
+    """指定時刻がニュース除外期間内かチェック"""
+    if not exclusion_periods:
+        return False
+    
+    for start_time, end_time in exclusion_periods:
+        if start_time <= timestamp <= end_time:
+            return True
+    return False
+
+
+def _time_session_mask(idx, sessions):
+    """時間帯セッションマスク（複数セッション対応）"""
+    if not sessions:
+        return pd.Series([True] * len(idx), index=idx)
+    
+    # タイムゾーンをUTCに統一
+    t = idx.tz_convert("UTC")
+    
+    # 各セッションのマスクを作成
+    session_masks = []
+    for session in sessions:
+        start_time = session["start"]
+        end_time = session["end"]
+        
+        start_h, start_m = map(int, start_time.split(":"))
+        end_h, end_m = map(int, end_time.split(":"))
+        
+        # セッション時間マスク
+        session_mask = ((t.hour > start_h) | ((t.hour == start_h) & (t.minute >= start_m))) & \
+                      ((t.hour < end_h) | ((t.hour == end_h) & (t.minute <= end_m)))
+        session_masks.append(pd.Series(session_mask, index=idx))
+    
+    # 全セッションのOR結合
+    if session_masks:
+        combined_mask = session_masks[0]
+        for mask in session_masks[1:]:
+            combined_mask = combined_mask | mask
+        return combined_mask
+    else:
+        return pd.Series([True] * len(idx), index=idx)
+
 # -------------------- MTF（上位足）構築 --------------------
 
 def _higher_tf_filter_resample(df_low, rule_hi="60T", fast=9, slow=21):
@@ -154,6 +232,25 @@ def _higher_tf_filter_resample(df_low, rule_hi="60T", fast=9, slow=21):
     hi_dir = pd.Series(hi_sign, index=hi.index)
     hi_dir = hi_dir.reindex(df_low.index, method="ffill")
     return hi_dir.fillna(1).astype(int)
+
+
+def _higher_tf_slope_filter(df_low, rule_hi="60T", fast=9, slow=21):
+    """MTFの傾きフィルタ（EMAの差分>0で上向き判定）"""
+    hi = _resample_ohlcv(df_low.reset_index()[["timestamp","open","high","low","close","volume"]], rule=rule_hi)
+    hi = _make_indicators(hi, fast, slow)
+    
+    # EMAの差分で傾き判定
+    ema_diff = hi["ema_fast"] - hi["ema_slow"]
+    slope_up = ema_diff > 0  # 上向き
+    slope_down = ema_diff < 0  # 下向き
+    
+    # 方向と傾きの組み合わせ
+    hi_slope = pd.Series(0, index=hi.index)  # 0: 横ばい, 1: 上向き, -1: 下向き
+    hi_slope[slope_up] = 1
+    hi_slope[slope_down] = -1
+    
+    hi_slope = hi_slope.reindex(df_low.index, method="ffill")
+    return hi_slope.fillna(0).astype(int)
 
 
 def _higher_tf_filter_from_csv(df_low, csv_dir, tz="Asia/Tokyo", rule_hi="60T", fast=9, slow=21):
@@ -199,13 +296,19 @@ def backtest(df_low,
              point_value=1.0,
              use_mtf=True,
              hi_dir=None,
+             hi_slope=None,
              direction="long",
              spread_pts=0.0,
              slippage_pts=0.0,
              commission_value=0.0,
              friday_close_time="15:05",
              use_atr_tp=False,
-             atr_multiplier=2.0):
+             atr_multiplier=2.0,
+             news_exclusion_periods=None,
+             use_breakeven=False,
+             breakeven_r=0.5,
+             time_sessions=None,
+             session_policy="flat"):
     df = df_low.copy()
     df = _make_indicators(df, ema_fast, ema_slow)
     # MTF方向
@@ -214,14 +317,39 @@ def backtest(df_low,
             raise ValueError("hi_dir must be provided when use_mtf=True")
     else:
         hi_dir = pd.Series(1, index=df.index, dtype=int)
-    # セッション
-    sess = _session_mask(df.index, start=session_start, end=session_end, friday_close_time=friday_close_time)
+    # セッション（時間帯除外対応）
+    if time_sessions:
+        # 時間帯除外セッション
+        sess = _time_session_mask(df.index, time_sessions)
+        # 金曜日特別処理は時間帯除外では無効化
+    else:
+        # 従来のセッション
+        sess = _session_mask(df.index, start=session_start, end=session_end, friday_close_time=friday_close_time)
+    
+    # ニュース除外フィルタ
+    news_excluded = pd.Series([False] * len(df), index=df.index)
+    if news_exclusion_periods and len(news_exclusion_periods) > 0:
+        for i, ts in enumerate(df.index):
+            news_excluded.iloc[i] = _is_news_exclusion_time(ts, news_exclusion_periods)
+    
+    # MTF傾きフィルタ
+    slope_ok = pd.Series([True] * len(df), index=df.index)
+    if hi_slope is not None and use_mtf:
+        # ロング: 上向き(1)または横ばい(0)を許可
+        # ショート: 下向き(-1)または横ばい(0)を許可
+        slope_ok = (hi_slope >= 0) | (hi_slope <= 0)  # 常にTrue（後で方向別に調整）
+    
     # シグナル
     cross_up = (df["ema_fast"] > df["ema_slow"]) & (df["ema_fast"].shift(1) <= df["ema_slow"].shift(1))
     cross_dn = (df["ema_fast"] < df["ema_slow"]) & (df["ema_fast"].shift(1) >= df["ema_slow"].shift(1))
     vol_ok = (df["vol_ratio"] >= vol_ratio_th) | df["vol_ratio"].isna()
-    long_signal = cross_up & vol_ok & ((hi_dir == 1) if use_mtf else True) & sess
-    short_signal = cross_dn & vol_ok & ((hi_dir == -1) if use_mtf else True) & sess
+    
+    # 方向別の傾きフィルタ適用
+    long_slope_ok = (hi_slope >= 0) if hi_slope is not None and use_mtf else True
+    short_slope_ok = (hi_slope <= 0) if hi_slope is not None and use_mtf else True
+    
+    long_signal = cross_up & vol_ok & ((hi_dir == 1) if use_mtf else True) & sess & ~news_excluded & long_slope_ok
+    short_signal = cross_dn & vol_ok & ((hi_dir == -1) if use_mtf else True) & sess & ~news_excluded & short_slope_ok
 
     want_long = direction in ("long","both")
     want_short = direction in ("short","both")
@@ -230,6 +358,7 @@ def backtest(df_low,
     side = 0  # +1 long, -1 short
     entry_price = None
     entry_time = None
+    breakeven_triggered = False  # ブレークイーブン発動フラグ
     trades = []
 
     for i in range(1, len(df)):
@@ -257,7 +386,17 @@ def backtest(df_low,
                 in_pos = True
         else:
             if side == 1:  # long
-                sl = entry_price - stop_pts
+                # ブレークイーブン処理
+                if use_breakeven and not breakeven_triggered:
+                    breakeven_level = entry_price + (stop_pts * breakeven_r)  # +0.5R
+                    if h >= breakeven_level:
+                        sl = entry_price  # ストップを建値に移動
+                        breakeven_triggered = True
+                    else:
+                        sl = entry_price - stop_pts
+                else:
+                    sl = entry_price - stop_pts if not breakeven_triggered else entry_price
+                
                 # ATRベースの利確または固定利確
                 if use_atr_tp and not pd.isna(df["atr"].iloc[i]):
                     tp = entry_price + (df["atr"].iloc[i] * atr_multiplier)
@@ -273,7 +412,7 @@ def backtest(df_low,
                 elif hit_tp:
                     exit_price = tp - slippage_pts  # 滑り
                     exit_reason = "TP"
-                elif force_close or not _session_mask(pd.DatetimeIndex([ts]), session_start, session_end)[0]:
+                elif force_close or (session_policy == "flat" and not _session_mask(pd.DatetimeIndex([ts]), session_start, session_end)[0]):
                     exit_price = c - slippage_pts
                     exit_reason = "SESSION_CLOSE"
                 if exit_price is not None:
@@ -289,9 +428,19 @@ def backtest(df_low,
                         "reason": exit_reason,
                         "side": "LONG"
                     })
-                    in_pos = False; entry_price=None; entry_time=None; side=0
+                    in_pos = False; entry_price=None; entry_time=None; side=0; breakeven_triggered=False
             else:  # short
-                sl = entry_price + stop_pts
+                # ブレークイーブン処理
+                if use_breakeven and not breakeven_triggered:
+                    breakeven_level = entry_price - (stop_pts * breakeven_r)  # -0.5R
+                    if l <= breakeven_level:
+                        sl = entry_price  # ストップを建値に移動
+                        breakeven_triggered = True
+                    else:
+                        sl = entry_price + stop_pts
+                else:
+                    sl = entry_price + stop_pts if not breakeven_triggered else entry_price
+                
                 # ATRベースの利確または固定利確
                 if use_atr_tp and not pd.isna(df["atr"].iloc[i]):
                     tp = entry_price - (df["atr"].iloc[i] * atr_multiplier)
@@ -307,7 +456,7 @@ def backtest(df_low,
                 elif hit_tp:
                     exit_price = tp + slippage_pts
                     exit_reason = "TP"
-                elif force_close or not _session_mask(pd.DatetimeIndex([ts]), session_start, session_end)[0]:
+                elif force_close or (session_policy == "flat" and not _session_mask(pd.DatetimeIndex([ts]), session_start, session_end)[0]):
                     exit_price = c + slippage_pts
                     exit_reason = "SESSION_CLOSE"
                 if exit_price is not None:
@@ -323,7 +472,7 @@ def backtest(df_low,
                         "reason": exit_reason,
                         "side": "SHORT"
                     })
-                    in_pos = False; entry_price=None; entry_time=None; side=0
+                    in_pos = False; entry_price=None; entry_time=None; side=0; breakeven_triggered=False
 
     # 残ポジはクローズ（終値）
     if in_pos:
@@ -453,6 +602,27 @@ def main():
 
     # MTF方向
     hi_dir = _build_hi_dir(low, cfg)
+    
+    # MTF傾きフィルタ
+    hi_slope = None
+    if cfg.get("use_mtf", True) and cfg.get("use_slope_filter", False):
+        hi_slope = _higher_tf_slope_filter(low, 
+                                          rule_hi=cfg.get("higher_tf_rule", "60T"),
+                                          fast=cfg.get("ema_fast", 9),
+                                          slow=cfg.get("ema_slow", 21))
+    
+    # ニュース除外期間の読み込み
+    news_exclusion_periods = _load_news_exclusions(
+        cfg.get("news_exclude_csv"),
+        cfg.get("news_exclusion_minutes", 30),
+        cfg.get("tz", "UTC")
+    )
+    
+    # 時間帯除外セッションの読み込み
+    time_sessions = cfg.get("time_sessions", None)
+    
+    # セッションポリシーの読み込み
+    session_policy = cfg.get("session_policy", "flat")
 
     # バックテスト本体
     trades, equity, metrics = backtest(
@@ -467,13 +637,19 @@ def main():
         point_value=cfg.get("point_value",1.0),
         use_mtf=cfg.get("use_mtf", True),
         hi_dir=hi_dir,
+        hi_slope=hi_slope,
         direction=cfg.get("direction","long"),
         spread_pts=cfg.get("spread_pts",0.0),
         slippage_pts=cfg.get("slippage_pts",0.0),
         commission_value=cfg.get("commission_value",0.0),
         friday_close_time=cfg.get("friday_close_time","15:05"),
         use_atr_tp=cfg.get("use_atr_tp",False),
-        atr_multiplier=cfg.get("atr_multiplier",2.0)
+        atr_multiplier=cfg.get("atr_multiplier",2.0),
+        news_exclusion_periods=news_exclusion_periods,
+        use_breakeven=cfg.get("use_breakeven",False),
+        breakeven_r=cfg.get("breakeven_r",0.5),
+        time_sessions=time_sessions,
+        session_policy=session_policy
     )
 
     # Walk-Forward（簡易）
@@ -495,7 +671,12 @@ def main():
         commission_value=cfg.get("commission_value",0.0),
         friday_close_time=cfg.get("friday_close_time","15:05"),
         use_atr_tp=cfg.get("use_atr_tp",False),
-        atr_multiplier=cfg.get("atr_multiplier",2.0)
+        atr_multiplier=cfg.get("atr_multiplier",2.0),
+        news_exclusion_periods=news_exclusion_periods,
+        use_breakeven=cfg.get("use_breakeven",False),
+        breakeven_r=cfg.get("breakeven_r",0.5),
+        time_sessions=time_sessions,
+        session_policy=session_policy
     )
 
     # タイムスタンプ付きファイル名生成

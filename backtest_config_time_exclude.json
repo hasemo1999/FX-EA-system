@@ -26,5 +26,19 @@
     "use_atr_tp": false,
     "atr_multiplier": 2.0,
     "exclude_news": false,
-    "news_exclusion_minutes": 30
+    "news_exclusion_minutes": 30,
+    "news_exclude_csv": null,
+    "use_slope_filter": false,
+    "use_breakeven": false,
+    "breakeven_r": 0.5,
+    "time_sessions": [
+        {
+            "start": "00:00",
+            "end": "12:59"
+        },
+        {
+            "start": "15:01",
+            "end": "23:59"
+        }
+    ]
 }
