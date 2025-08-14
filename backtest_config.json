@@ -1,0 +1,16 @@
+{
+    "input_dir": "バックテストデータ/バックテスト元データ",
+    "output_dir": "バックテストデータ/バックテスト結果",
+    "tz": "Asia/Tokyo",
+    "low_tf": "1T",
+    "ema_fast": 3,
+    "ema_slow": 5,
+    "vol_ratio_th": 1.0,
+    "session_start": "00:00",
+    "session_end": "23:59",
+    "stop_pts": 50.0,
+    "tp_pts": 100.0,
+    "higher_tf": "5T",
+    "point_value": 1.0,
+    "wf_splits": 3
+}
