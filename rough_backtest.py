@@ -23,11 +23,41 @@ rough_backtest.py
   # 例) MTF OFF
   python rough_backtest.py --cfg backtest_config.json --use_mtf false
 """
-import os, json, argparse
-from datetime import datetime
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import argparse
+import json
+import os
+import logging
+from datetime import datetime, timedelta
+import pytz
+from session_filter import build_session_mask
+
+# ロガー設定
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def _safe_timestamp_to_iso(ts):
+    """タイムスタンプを安全にISO形式に変換"""
+    try:
+        if hasattr(ts, 'isoformat'):
+            return ts.isoformat()
+        elif isinstance(ts, (int, np.integer)):
+            # numpy.int64の場合、適切な単位で変換
+            if ts > 1e18:  # ナノ秒単位
+                return pd.Timestamp(ts, unit='ns').isoformat()
+            elif ts > 1e15:  # マイクロ秒単位
+                return pd.Timestamp(ts, unit='us').isoformat()
+            elif ts > 1e12:  # ミリ秒単位
+                return pd.Timestamp(ts, unit='ms').isoformat()
+            else:  # 秒単位
+                return pd.Timestamp(ts, unit='s').isoformat()
+        else:
+            return pd.Timestamp(ts).isoformat()
+    except Exception as e:
+        logger.warning(f"タイムスタンプ変換エラー: {e}, 値: {ts}")
+        return str(ts)
 
 # -------------------- 共通ユーティリティ --------------------
 
@@ -89,8 +119,13 @@ def _parse_csv(path, tz="Asia/Tokyo", ts_col_candidates=("time","timestamp","dat
     return outdf
 
 
-def _resample_ohlcv(df, rule="5T"):
+def _resample_ohlcv(df, rule="5min"):
+    """OHLCVデータのリサンプリング（非推奨警告対応）"""
     df = df.set_index("timestamp")
+    # 'T'を'min'に変換
+    if isinstance(rule, str) and rule.endswith('T'):
+        rule = rule.replace('T', 'min')
+    
     ohlc = df[["open","high","low","close"]].resample(rule).agg({
         "open":"first","high":"max","low":"min","close":"last"})
     if "volume" in df.columns:
@@ -125,25 +160,98 @@ def _make_indicators(df, fast=9, slow=21):
     
     return df
 
+def _atr_quantile_filter(df, atr_period=14, atr_q_window=500, atr_q_lo=0.15, atr_q_hi=0.85):
+    """
+    ATR分位フィルタ
+    指定した過去本数のATR分布から下限・上限の分位点を求め、
+    現在のATRがその帯域内のときだけエントリーを許可
+    
+    Args:
+        df: DataFrame with OHLCV data
+        atr_period: ATR計算期間
+        atr_q_window: 分位を計算する過去本数
+        atr_q_lo: 下側分位（0.0〜1.0）
+        atr_q_hi: 上側分位（0.0〜1.0）
+    
+    Returns:
+        pd.Series: True if ATR is within quantile range
+    """
+    try:
+        # ATR計算
+        if "atr" not in df.columns:
+            df = _make_indicators(df, atr_period=atr_period)
+        
+        # 分位フィルタの結果を格納
+        atr_quantile_ok = pd.Series([True] * len(df), index=df.index)
+        
+        # デバッグ用カウンタ
+        total_checks = 0
+        rejected_count = 0
+        
+        # 各バーで分位計算
+        for i in range(atr_q_window, len(df)):
+            # 過去atr_q_window本のATRを取得
+            atr_window = df["atr"].iloc[i-atr_q_window:i]
+            
+            # 分位点の計算
+            atr_sorted = atr_window.sort_values()
+            idx_lo = int(np.floor(atr_q_lo * (len(atr_sorted) - 1)))
+            idx_hi = int(np.ceil(atr_q_hi * (len(atr_sorted) - 1)))
+            
+            idx_lo = max(0, min(len(atr_sorted) - 1, idx_lo))
+            idx_hi = max(0, min(len(atr_sorted) - 1, idx_hi))
+            
+            q_lo = atr_sorted.iloc[idx_lo]
+            q_hi = atr_sorted.iloc[idx_hi]
+            
+            # 現在のATRが帯域内かチェック
+            atr_curr = df["atr"].iloc[i]
+            is_within_range = (atr_curr >= q_lo and atr_curr <= q_hi)
+            atr_quantile_ok.iloc[i] = is_within_range
+            
+            total_checks += 1
+            if not is_within_range:
+                rejected_count += 1
+        
+        # デバッグ情報をログ出力
+        logger.info(f"ATR分位フィルタ: 総チェック数={total_checks}, 除外数={rejected_count}, 除外率={rejected_count/total_checks*100:.2f}%")
+        logger.info(f"ATR分位設定: lo={atr_q_lo}, hi={atr_q_hi}, window={atr_q_window}")
+        
+        return atr_quantile_ok
+        
+    except Exception as e:
+        logger.error(f"ATR分位フィルタエラー: {str(e)}")
+        return pd.Series([True] * len(df), index=df.index)
+
 
 def _session_mask(idx, start="09:00", end="15:00", friday_close_time="15:05"):
-    """セッション時間マスク（金曜日特別処理含む）"""
-    t = idx.tz_convert("Asia/Tokyo")
-    start_h, start_m = map(int, start.split(":"))
-    end_h, end_m = map(int, end.split(":"))
-    friday_close_h, friday_close_m = map(int, friday_close_time.split(":"))
-    
-    # 通常のセッション時間
-    normal_session = ((t.hour > start_h) | ((t.hour == start_h) & (t.minute >= start_m))) & \
-                     ((t.hour < end_h) | ((t.hour == end_h) & (t.minute <= end_m)))
-    
-    # 金曜日の特別処理
-    friday_mask = t.weekday == 4
-    friday_session = ((t.hour > start_h) | ((t.hour == start_h) & (t.minute >= start_m))) & \
-                     ((t.hour < friday_close_h) | ((t.hour == friday_close_h) & (t.minute <= friday_close_m)))
-    
-    # 金曜日以外は通常時間、金曜日は特別時間
-    return (~friday_mask & normal_session) | (friday_mask & friday_session)
+    """セッション時間マスク（堅牢版）"""
+    try:
+        # 金曜日の特別処理
+        friday_close_h, friday_close_m = map(int, friday_close_time.split(":"))
+        
+        # 通常セッション
+        sessions = [(start, end)]
+        
+        # 金曜日特別セッション
+        friday_sessions = [(start, friday_close_time)]
+        
+        # 平日（月-木）のマスク
+        weekdays_normal = [0, 1, 2, 3]  # 月-木
+        normal_mask = build_session_mask(idx, sessions, tz="Asia/Tokyo", weekdays=weekdays_normal, strict=False)
+        
+        # 金曜日のマスク
+        weekdays_friday = [4]  # 金曜日
+        friday_mask = build_session_mask(idx, friday_sessions, tz="Asia/Tokyo", weekdays=weekdays_friday, strict=False)
+        
+        # 結合（非推奨警告対応）
+        combined_mask = normal_mask | friday_mask
+        return combined_mask
+        
+    except Exception as e:
+        logger.error(f"セッションマスクエラー: {str(e)}")
+        # フェイルオープン（24時間取引）
+        return pd.Series(True, index=idx)
 
 
 def _load_news_exclusions(news_csv_path, exclusion_minutes=30, tz="UTC"):
@@ -193,35 +301,21 @@ def _is_news_exclusion_time(timestamp, exclusion_periods):
 
 
 def _time_session_mask(idx, sessions):
-    """時間帯セッションマスク（複数セッション対応）"""
+    """複数の時間帯セッションに対応したマスク（堅牢版）"""
     if not sessions:
         return pd.Series([True] * len(idx), index=idx)
     
-    # タイムゾーンをUTCに統一
-    t = idx.tz_convert("UTC")
-    
-    # 各セッションのマスクを作成
-    session_masks = []
-    for session in sessions:
-        start_time = session["start"]
-        end_time = session["end"]
+    try:
+        # セッションをタプルのリストに変換
+        session_tuples = [(session["start"], session["end"]) for session in sessions]
         
-        start_h, start_m = map(int, start_time.split(":"))
-        end_h, end_m = map(int, end_time.split(":"))
+        # 堅牢なセッションフィルタを使用
+        return build_session_mask(idx, session_tuples, tz="UTC", strict=False)
         
-        # セッション時間マスク
-        session_mask = ((t.hour > start_h) | ((t.hour == start_h) & (t.minute >= start_m))) & \
-                      ((t.hour < end_h) | ((t.hour == end_h) & (t.minute <= end_m)))
-        session_masks.append(pd.Series(session_mask, index=idx))
-    
-    # 全セッションのOR結合
-    if session_masks:
-        combined_mask = session_masks[0]
-        for mask in session_masks[1:]:
-            combined_mask = combined_mask | mask
-        return combined_mask
-    else:
-        return pd.Series([True] * len(idx), index=idx)
+    except Exception as e:
+        logger.error(f"時間セッションマスクエラー: {str(e)}")
+        # フェイルオープン（24時間取引）
+        return pd.Series(True, index=idx)
 
 # -------------------- MTF（上位足）構築 --------------------
 
@@ -230,27 +324,63 @@ def _higher_tf_filter_resample(df_low, rule_hi="60T", fast=9, slow=21):
     hi = _make_indicators(hi, fast, slow)
     hi_sign = np.where(hi["ema_fast"] > hi["ema_slow"], 1, -1)
     hi_dir = pd.Series(hi_sign, index=hi.index)
-    hi_dir = hi_dir.reindex(df_low.index, method="ffill")
+    
+    # タイムゾーン処理の強化
+    try:
+        # 両方のインデックスのタイムゾーン情報を確認
+        low_tz = getattr(df_low.index, 'tz', None)
+        hi_tz = getattr(hi_dir.index, 'tz', None)
+        
+        # タイムゾーンを統一
+        if low_tz != hi_tz:
+            if low_tz is not None and hi_tz is None:
+                # hi_dirをlow_tzに合わせる
+                hi_dir.index = hi_dir.index.tz_localize(low_tz)
+            elif low_tz is None and hi_tz is not None:
+                # hi_dirのタイムゾーンを削除
+                hi_dir.index = hi_dir.index.tz_localize(None)
+            elif low_tz is not None and hi_tz is not None:
+                # hi_dirをlow_tzに変換
+                hi_dir.index = hi_dir.index.tz_convert(low_tz)
+        
+        # reindex実行
+        hi_dir = hi_dir.reindex(df_low.index, method="ffill")
+    except Exception as e:
+        logger.warning(f"タイムゾーン処理エラー: {e}")
+        # エラー時はタイムゾーンを無視してreindex
+        try:
+            hi_dir = hi_dir.reindex(df_low.index, method="ffill")
+        except Exception as e2:
+            logger.warning(f"reindexエラー: {e2}")
+            # 最終手段：インデックスを文字列化して処理
+            try:
+                hi_dir.index = hi_dir.index.astype(str)
+                df_low_str_index = df_low.index.astype(str)
+                hi_dir = hi_dir.reindex(df_low_str_index, method="ffill")
+                hi_dir.index = df_low.index  # 元のインデックスに戻す
+            except Exception as e3:
+                logger.error(f"最終手段も失敗: {e3}")
+                # 完全に失敗した場合はデフォルト値で埋める
+                hi_dir = pd.Series(1, index=df_low.index, dtype=int)
+    
     return hi_dir.fillna(1).astype(int)
 
 
 def _higher_tf_slope_filter(df_low, rule_hi="60T", fast=9, slow=21):
-    """MTFの傾きフィルタ（EMAの差分>0で上向き判定）"""
+    """MTFの傾きフィルタ（EMAの差分の変化で上向き判定）"""
     hi = _resample_ohlcv(df_low.reset_index()[["timestamp","open","high","low","close","volume"]], rule=rule_hi)
     hi = _make_indicators(hi, fast, slow)
     
-    # EMAの差分で傾き判定
-    ema_diff = hi["ema_fast"] - hi["ema_slow"]
-    slope_up = ema_diff > 0  # 上向き
-    slope_down = ema_diff < 0  # 下向き
+    # EMAの差分を作成
+    hi['_ema_diff'] = hi['ema_fast'] - hi['ema_slow']
+    # 差分の変化（傾き）を計算
+    hi['_ema_diff_slope'] = hi['_ema_diff'] - hi['_ema_diff'].shift(1)
+    # 上向き判定（差分が増加中）
+    hi_slope_up = (hi['_ema_diff_slope'] > 0).astype(int)  # 上向き=1, それ以外=0
     
-    # 方向と傾きの組み合わせ
-    hi_slope = pd.Series(0, index=hi.index)  # 0: 横ばい, 1: 上向き, -1: 下向き
-    hi_slope[slope_up] = 1
-    hi_slope[slope_down] = -1
-    
-    hi_slope = hi_slope.reindex(df_low.index, method="ffill")
-    return hi_slope.fillna(0).astype(int)
+    # 低次TFへffillで貼り付け
+    hi_slope_up = hi_slope_up.reindex(df_low.index, method='ffill').fillna(1).astype(int)
+    return hi_slope_up
 
 
 def _higher_tf_filter_from_csv(df_low, csv_dir, tz="Asia/Tokyo", rule_hi="60T", fast=9, slow=21):
@@ -288,35 +418,26 @@ def _build_hi_dir(df_low, cfg):
 
 # -------------------- バックテスト本体 --------------------
 
-def backtest(df_low,
-             ema_fast=9, ema_slow=21,
-             vol_ratio_th=1.5,
-             session_start="09:00", session_end="15:00",
-             stop_pts=100.0, tp_pts=200.0,
-             point_value=1.0,
-             use_mtf=True,
-             hi_dir=None,
-             hi_slope=None,
-             direction="long",
-             spread_pts=0.0,
-             slippage_pts=0.0,
-             commission_value=0.0,
-             friday_close_time="15:05",
-             use_atr_tp=False,
-             atr_multiplier=2.0,
-             news_exclusion_periods=None,
-             use_breakeven=False,
-             breakeven_r=0.5,
-             time_sessions=None,
-             session_policy="flat"):
-    df = df_low.copy()
-    df = _make_indicators(df, ema_fast, ema_slow)
+def backtest(df, ema_fast=9, ema_slow=21, vol_ratio_th=1.5, stop_pts=1.0, tp_pts=2.0, 
+             point_value=1.0, spread_pts=0.0, slippage_pts=0.0, commission_value=0.0,
+             direction="long", use_mtf=False, higher_tf_mode="csv", higher_tf_rule="60T", 
+             higher_tf_csv_dir=None, start_date=None, end_date=None, tz="UTC",
+             session_start="09:00", session_end="15:00", friday_close_time="15:05",
+             use_atr_tp=False, atr_multiplier=2.0, exclude_news=False, news_exclusion_minutes=30,
+             news_exclude_csv=None, use_slope_filter=False, use_breakeven=False, breakeven_r=0.5,
+             time_sessions=None, session_policy="flat", cfg=None):
+    df_low = df.copy()
+    df = _make_indicators(df_low, ema_fast, ema_slow)
     # MTF方向
     if use_mtf:
-        if hi_dir is None:
-            raise ValueError("hi_dir must be provided when use_mtf=True")
+        hi_dir = _higher_tf_filter_resample(df_low, higher_tf_rule, ema_fast, ema_slow)
+        if use_slope_filter:
+            hi_slope = _higher_tf_slope_filter(df_low, higher_tf_rule, ema_fast, ema_slow)
+        else:
+            hi_slope = None
     else:
-        hi_dir = pd.Series(1, index=df.index, dtype=int)
+        hi_dir = pd.Series(1, index=df_low.index, dtype=int)  # デフォルトでロング許可
+        hi_slope = None
     # セッション（時間帯除外対応）
     if time_sessions:
         # 時間帯除外セッション
@@ -328,28 +449,101 @@ def backtest(df_low,
     
     # ニュース除外フィルタ
     news_excluded = pd.Series([False] * len(df), index=df.index)
-    if news_exclusion_periods and len(news_exclusion_periods) > 0:
-        for i, ts in enumerate(df.index):
-            news_excluded.iloc[i] = _is_news_exclusion_time(ts, news_exclusion_periods)
-    
-    # MTF傾きフィルタ
-    slope_ok = pd.Series([True] * len(df), index=df.index)
-    if hi_slope is not None and use_mtf:
-        # ロング: 上向き(1)または横ばい(0)を許可
-        # ショート: 下向き(-1)または横ばい(0)を許可
-        slope_ok = (hi_slope >= 0) | (hi_slope <= 0)  # 常にTrue（後で方向別に調整）
+    if exclude_news and news_exclusion_minutes is not None and news_exclude_csv is not None:
+        news_excluded = _is_news_exclusion_time(df.index, _load_news_exclusions(news_exclude_csv, news_exclusion_minutes, tz))
     
     # シグナル
     cross_up = (df["ema_fast"] > df["ema_slow"]) & (df["ema_fast"].shift(1) <= df["ema_slow"].shift(1))
     cross_dn = (df["ema_fast"] < df["ema_slow"]) & (df["ema_fast"].shift(1) >= df["ema_slow"].shift(1))
     vol_ok = (df["vol_ratio"] >= vol_ratio_th) | df["vol_ratio"].isna()
     
-    # 方向別の傾きフィルタ適用
-    long_slope_ok = (hi_slope >= 0) if hi_slope is not None and use_mtf else True
-    short_slope_ok = (hi_slope <= 0) if hi_slope is not None and use_mtf else True
+    # MTF方向と傾きフィルタの組み合わせ
+    use_slope = cfg.get("mtf_slope_filter", False) if 'cfg' in locals() and cfg is not None else False
     
-    long_signal = cross_up & vol_ok & ((hi_dir == 1) if use_mtf else True) & sess & ~news_excluded & long_slope_ok
-    short_signal = cross_dn & vol_ok & ((hi_dir == -1) if use_mtf else True) & sess & ~news_excluded & short_slope_ok
+    if use_mtf:
+        long_gate = (hi_dir == 1) & (hi_slope == 1 if use_slope and hi_slope is not None else True)
+        short_gate = (hi_dir == -1) & (hi_slope == 0 if use_slope and hi_slope is not None else True)
+    else:
+        long_gate = short_gate = True
+    
+    # 品質フィルタ（ATRレジーム + EMAギャップ）
+    quality_gate_base = pd.Series([True] * len(df), index=df.index)
+    if 'cfg' in locals() and cfg is not None:
+        # ATRレジームフィルタ
+        atr_floor_mult = cfg.get("atr_floor_mult", None)
+        atr_floor_window = cfg.get("atr_floor_window", 2016)
+        if atr_floor_mult is not None and "atr" in df.columns:
+            atr_med = df["atr"].rolling(atr_floor_window, min_periods=1).median()
+            atr_ok = (df["atr"] >= atr_floor_mult * atr_med)
+            quality_gate_base = quality_gate_base & atr_ok
+        
+        # EMAギャップフィルタ
+        ema_gap_atr_mult = cfg.get("ema_gap_atr_mult", None)
+        if ema_gap_atr_mult is not None:
+            gap = (df["ema_fast"] - df["ema_slow"]).abs()
+            atr_for_gap = df["atr"] if "atr" in df.columns else pd.Series([1.0] * len(df), index=df.index)
+            gap_ok = (gap >= ema_gap_atr_mult * atr_for_gap)
+            quality_gate_base = quality_gate_base & gap_ok
+    
+    # ATR分位フィルタ
+    if 'cfg' in locals() and cfg is not None:
+        atr_quantile_enabled = cfg.get("atr_quantile_enabled", False)
+        logger.info(f"ATR分位フィルタ設定確認: enabled={atr_quantile_enabled}")
+        
+        if atr_quantile_enabled:
+            atr_q_lo = cfg.get("atr_quantile_lo", 0.15)
+            atr_q_hi = cfg.get("atr_quantile_hi", 0.85)
+            atr_q_window = cfg.get("atr_quantile_window", 500)
+            logger.info(f"ATR分位フィルタを適用: lo={atr_q_lo}, hi={atr_q_hi}, window={atr_q_window}")
+            atr_quantile_ok = _atr_quantile_filter(df, atr_period=14, atr_q_window=atr_q_window, atr_q_lo=atr_q_lo, atr_q_hi=atr_q_hi)
+        else:
+            logger.info("ATR分位フィルタは無効")
+            atr_quantile_ok = pd.Series([True] * len(df), index=df.index)
+    else:
+        # cfgがNoneの場合はデフォルト値を使用
+        logger.info("cfgがNoneのためATR分位フィルタは無効")
+        atr_quantile_ok = pd.Series([True] * len(df), index=df.index)
+
+    # ブロック内訳カウンタ（デバッグ用）
+    global cnt
+    cnt = {"cross_up": 0, "vol_reject": 0, "gap_reject": 0, "atr_reject": 0, "atr_quantile_reject": 0, "mtf_reject": 0, "session_reject": 0, "news_reject": 0, "pre_signal": 0, "enter": 0}
+    
+    # ロングシグナルのブロック内訳
+    raw_up = cross_up.copy()
+    raw_down = cross_dn.copy()
+    cnt["cross_up"] = int(raw_up.sum())
+    
+    # 各フィルタのブロック数
+    cnt["vol_reject"] = int((raw_up & ~vol_ok).sum())
+    cnt["session_reject"] = int((raw_up & vol_ok & ~sess).sum())
+    cnt["news_reject"] = int((raw_up & vol_ok & sess & news_excluded).sum())
+    
+    # 品質フィルタのブロック数
+    if 'cfg' in locals() and cfg is not None:
+        atr_floor_mult = cfg.get("atr_floor_mult", None)
+        ema_gap_atr_mult = cfg.get("ema_gap_atr_mult", None)
+        
+        if atr_floor_mult is not None and "atr" in df.columns:
+            atr_med = df["atr"].rolling(cfg.get("atr_floor_window", 2016), min_periods=1).median()
+            atr_ok = (df["atr"] >= atr_floor_mult * atr_med)
+            cnt["atr_reject"] = int((raw_up & vol_ok & sess & ~news_excluded & ~atr_ok).sum())
+        
+        if ema_gap_atr_mult is not None:
+            gap = (df["ema_fast"] - df["ema_slow"]).abs()
+            atr_for_gap = df["atr"] if "atr" in df.columns else pd.Series([1.0] * len(df), index=df.index)
+            gap_ok = (gap >= ema_gap_atr_mult * atr_for_gap)
+            cnt["gap_reject"] = int((raw_up & vol_ok & sess & ~news_excluded & gap_ok & ~gap_ok).sum())
+    
+    # ATR分位フィルタのブロック数（最終ゲート直前）
+    pre_signal_mask = (cross_up & vol_ok & long_gate & sess & ~news_excluded & quality_gate_base)
+    cnt["pre_signal"] = int(pre_signal_mask.sum())
+    cnt["atr_quantile_reject"] = int((pre_signal_mask & ~atr_quantile_ok).sum())
+    
+    # MTFフィルタのブロック数
+    cnt["mtf_reject"] = int((raw_up & vol_ok & sess & ~news_excluded & (long_gate == False)).sum())
+    
+    long_signal = cross_up & vol_ok & long_gate & sess & ~news_excluded & quality_gate_base & atr_quantile_ok
+    short_signal = cross_dn & vol_ok & short_gate & sess & ~news_excluded & quality_gate_base & atr_quantile_ok
 
     want_long = direction in ("long","both")
     want_short = direction in ("short","both")
@@ -358,7 +552,10 @@ def backtest(df_low,
     side = 0  # +1 long, -1 short
     entry_price = None
     entry_time = None
+    # エントリー時のATR値
+    atr_entry_value = None
     breakeven_triggered = False  # ブレークイーブン発動フラグ
+    be_armed = False  # ブレークイーブン準備フラグ
     trades = []
 
     for i in range(1, len(df)):
@@ -366,8 +563,17 @@ def backtest(df_low,
         o,h,l,c = df["open"].iloc[i], df["high"].iloc[i], df["low"].iloc[i], df["close"].iloc[i]
 
         # 金曜日強制クローズ（設定時間）
-        ts_jst = ts.tz_convert("Asia/Tokyo")
-        is_friday = ts_jst.weekday() == 4
+        try:
+            if hasattr(ts, 'tz_convert'):
+                ts_jst = ts.tz_convert("Asia/Tokyo")
+            else:
+                # tsがnumpy.int64の場合、pd.Timestampに変換
+                ts_jst = pd.Timestamp(ts, tz="UTC").tz_convert("Asia/Tokyo")
+            is_friday = ts_jst.weekday() == 4
+        except Exception as e:
+            logger.warning(f"タイムスタンプ変換エラー: {e}")
+            # エラー時は金曜日判定をスキップ
+            is_friday = False
         friday_close_h, friday_close_m = map(int, friday_close_time.split(":"))
         force_close = is_friday and (ts_jst.hour == friday_close_h and ts_jst.minute >= friday_close_m)
 
@@ -383,19 +589,28 @@ def backtest(df_low,
                     price_in = o - spread_pts - slippage_pts
                 entry_price = price_in
                 entry_time = ts
+                # エントリー時のATRを記録
+                try:
+                    atr_entry_value = float(df["atr"].iloc[i]) if "atr" in df.columns and not pd.isna(df["atr"].iloc[i]) else None
+                except Exception:
+                    atr_entry_value = None
                 in_pos = True
+                cnt["enter"] += 1
         else:
             if side == 1:  # long
-                # ブレークイーブン処理
-                if use_breakeven and not breakeven_triggered:
-                    breakeven_level = entry_price + (stop_pts * breakeven_r)  # +0.5R
-                    if h >= breakeven_level:
-                        sl = entry_price  # ストップを建値に移動
-                        breakeven_triggered = True
-                    else:
-                        sl = entry_price - stop_pts
+                # ブレークイーブン処理（+0.5Rで建値BE）
+                be_after_r = cfg.get("breakeven_after_r", None) if 'cfg' in locals() and cfg is not None else None
+                if be_after_r is not None and not be_armed:
+                    # 進捗R（stop_pts基準）を評価
+                    prog = (h - entry_price) / stop_pts if stop_pts > 0 else 0.0
+                    if prog >= be_after_r:
+                        be_armed = True
+                
+                # ストップ設定
+                if be_armed:
+                    sl = entry_price  # 建値BE
                 else:
-                    sl = entry_price - stop_pts if not breakeven_triggered else entry_price
+                    sl = entry_price - stop_pts
                 
                 # ATRベースの利確または固定利確
                 if use_atr_tp and not pd.isna(df["atr"].iloc[i]):
@@ -412,34 +627,38 @@ def backtest(df_low,
                 elif hit_tp:
                     exit_price = tp - slippage_pts  # 滑り
                     exit_reason = "TP"
-                elif force_close or (session_policy == "flat" and not _session_mask(pd.DatetimeIndex([ts]), session_start, session_end)[0]):
+                elif force_close or (session_policy == "flat" and not _session_mask(pd.DatetimeIndex([ts]), session_start, session_end).iloc[0]):
                     exit_price = c - slippage_pts
                     exit_reason = "SESSION_CLOSE"
                 if exit_price is not None:
                     pnl_pts = (exit_price - (entry_price)) - spread_pts  # round-turnで実質もう半分のスプレッド
                     pnl_value = pnl_pts * point_value - commission_value
                     trades.append({
-                        "entry_time": entry_time.isoformat(),
-                        "exit_time": ts.isoformat(),
+                        "entry_time": _safe_timestamp_to_iso(entry_time),
+                        "exit_time": _safe_timestamp_to_iso(ts),
                         "entry": float(entry_price),
                         "exit": float(exit_price),
                         "pnl_pts": float(pnl_pts),
                         "pnl_value": float(pnl_value),
+                        "atr_at_entry": float(atr_entry_value) if atr_entry_value is not None else None,
                         "reason": exit_reason,
                         "side": "LONG"
                     })
-                    in_pos = False; entry_price=None; entry_time=None; side=0; breakeven_triggered=False
+                    in_pos = False; entry_price=None; entry_time=None; side=0; atr_entry_value=None; breakeven_triggered=False; be_armed=False
             else:  # short
-                # ブレークイーブン処理
-                if use_breakeven and not breakeven_triggered:
-                    breakeven_level = entry_price - (stop_pts * breakeven_r)  # -0.5R
-                    if l <= breakeven_level:
-                        sl = entry_price  # ストップを建値に移動
-                        breakeven_triggered = True
-                    else:
-                        sl = entry_price + stop_pts
+                # ブレークイーブン処理（-0.5Rで建値BE）
+                be_after_r = cfg.get("breakeven_after_r", None) if 'cfg' in locals() and cfg is not None else None
+                if be_after_r is not None and not be_armed:
+                    # 進捗R（stop_pts基準）を評価
+                    prog = (entry_price - l) / stop_pts if stop_pts > 0 else 0.0
+                    if prog >= be_after_r:
+                        be_armed = True
+                
+                # ストップ設定
+                if be_armed:
+                    sl = entry_price  # 建値BE
                 else:
-                    sl = entry_price + stop_pts if not breakeven_triggered else entry_price
+                    sl = entry_price + stop_pts
                 
                 # ATRベースの利確または固定利確
                 if use_atr_tp and not pd.isna(df["atr"].iloc[i]):
@@ -456,23 +675,24 @@ def backtest(df_low,
                 elif hit_tp:
                     exit_price = tp + slippage_pts
                     exit_reason = "TP"
-                elif force_close or (session_policy == "flat" and not _session_mask(pd.DatetimeIndex([ts]), session_start, session_end)[0]):
+                elif force_close or (session_policy == "flat" and not _session_mask(pd.DatetimeIndex([ts]), session_start, session_end).iloc[0]):
                     exit_price = c + slippage_pts
                     exit_reason = "SESSION_CLOSE"
                 if exit_price is not None:
                     pnl_pts = ((entry_price) - exit_price) - spread_pts
                     pnl_value = pnl_pts * point_value - commission_value
                     trades.append({
-                        "entry_time": entry_time.isoformat(),
-                        "exit_time": ts.isoformat(),
+                        "entry_time": _safe_timestamp_to_iso(entry_time),
+                        "exit_time": _safe_timestamp_to_iso(ts),
                         "entry": float(entry_price),
                         "exit": float(exit_price),
                         "pnl_pts": float(pnl_pts),
                         "pnl_value": float(pnl_value),
+                        "atr_at_entry": float(atr_entry_value) if atr_entry_value is not None else None,
                         "reason": exit_reason,
                         "side": "SHORT"
                     })
-                    in_pos = False; entry_price=None; entry_time=None; side=0; breakeven_triggered=False
+                    in_pos = False; entry_price=None; entry_time=None; side=0; atr_entry_value=None; breakeven_triggered=False
 
     # 残ポジはクローズ（終値）
     if in_pos:
@@ -489,12 +709,13 @@ def backtest(df_low,
             pnl_value = pnl_pts * point_value - commission_value
             slabel = "SHORT"
         trades.append({
-            "entry_time": entry_time.isoformat(),
-            "exit_time": last_ts.isoformat(),
+            "entry_time": _safe_timestamp_to_iso(entry_time),
+            "exit_time": _safe_timestamp_to_iso(last_ts),
             "entry": float(entry_price),
             "exit": float(exit_price),
             "pnl_pts": float(pnl_pts),
             "pnl_value": float(pnl_value),
+            "atr_at_entry": float(atr_entry_value) if atr_entry_value is not None else None,
             "reason": "EOD_CLOSE",
             "side": slabel
         })
@@ -506,7 +727,7 @@ def backtest(df_low,
     # エクイティ計算
     equity = trades_df["pnl_value"].cumsum()
     equity.index = pd.to_datetime(trades_df["exit_time"])
-    equity = equity.asfreq("T", method="pad")  # 視覚化用の1分補間
+    equity = equity.asfreq("1min", method="pad")  # 視覚化用の1分補間
     peak = equity.cummax()
     dd = equity - peak
     maxdd = dd.min()
@@ -525,6 +746,17 @@ def backtest(df_low,
         "MaxDD": float(maxdd),
         "AvgR": float((trades_df["pnl_pts"]/abs(stop_pts)).mean()) if stop_pts!=0 else None
     }
+    
+    # ブロック内訳をメトリクスに追加
+    if 'cnt' in globals():
+        metrics.update(cnt)
+        # 率の追加
+        pre_sig = metrics.get("pre_signal", 0)
+        metrics["atrq_reject_rate"] = (metrics.get("atr_quantile_reject", 0) / pre_sig) if pre_sig else 0.0
+        cross = metrics.get("cross_up", 0)
+        gate_mtf_reject = metrics.get("mtf_reject", 0)
+        metrics["mtf_reject_rate"] = (gate_mtf_reject / cross) if cross else 0.0
+    
     return trades_df, equity.to_frame(name="equity"), metrics
 
 # -------------------- Walk-Forward --------------------
@@ -543,8 +775,8 @@ def walk_forward(df, cfg, n_splits=7, **bt_kw):
         hi_is = _build_hi_dir(is_df, cfg)
         hi_oos = _build_hi_dir(oos_df, cfg)
         # IS/OOS
-        tr_is, _, m_is = backtest(is_df, hi_dir=hi_is, use_mtf=cfg.get("use_mtf", True), **bt_kw)
-        tr_oos, _, m_oos = backtest(oos_df, hi_dir=hi_oos, use_mtf=cfg.get("use_mtf", True), **bt_kw)
+        tr_is, _, m_is = backtest(is_df, cfg=cfg, **bt_kw)
+        tr_oos, _, m_oos = backtest(oos_df, cfg=cfg, **bt_kw)
         np_is = m_is.get("NetProfit", 0.0)
         np_oos = m_oos.get("NetProfit", 0.0)
         wfe = (np_oos / np_is) if np_is != 0 else 0.0
@@ -626,57 +858,75 @@ def main():
 
     # バックテスト本体
     trades, equity, metrics = backtest(
-        low,
+        df,
         ema_fast=cfg.get("ema_fast",9),
         ema_slow=cfg.get("ema_slow",21),
         vol_ratio_th=cfg.get("vol_ratio_th",1.5),
-        session_start=cfg.get("session_start","09:00"),
-        session_end=cfg.get("session_end","15:00"),
-        stop_pts=cfg.get("stop_pts",100.0),
-        tp_pts=cfg.get("tp_pts",200.0),
+        stop_pts=cfg.get("stop_pts",1.0),
+        tp_pts=cfg.get("tp_pts",2.0),
         point_value=cfg.get("point_value",1.0),
-        use_mtf=cfg.get("use_mtf", True),
-        hi_dir=hi_dir,
-        hi_slope=hi_slope,
-        direction=cfg.get("direction","long"),
         spread_pts=cfg.get("spread_pts",0.0),
         slippage_pts=cfg.get("slippage_pts",0.0),
         commission_value=cfg.get("commission_value",0.0),
+        direction=cfg.get("direction","long"),
+        use_mtf=cfg.get("use_mtf",True),
+        higher_tf_mode=cfg.get("higher_tf_mode","resample"),
+        higher_tf_rule=cfg.get("higher_tf_rule","60T"),
+        higher_tf_csv_dir=cfg.get("higher_tf_csv_dir",None),
+        start_date=cfg.get("start_date",None),
+        end_date=cfg.get("end_date",None),
+        tz=cfg.get("tz","UTC"),
+        session_start=cfg.get("session_start","09:00"),
+        session_end=cfg.get("session_end","15:00"),
         friday_close_time=cfg.get("friday_close_time","15:05"),
         use_atr_tp=cfg.get("use_atr_tp",False),
         atr_multiplier=cfg.get("atr_multiplier",2.0),
-        news_exclusion_periods=news_exclusion_periods,
+        exclude_news=cfg.get("exclude_news",False),
+        news_exclusion_minutes=cfg.get("news_exclusion_minutes",30),
+        news_exclude_csv=cfg.get("news_exclude_csv",None),
+        use_slope_filter=cfg.get("use_slope_filter",False),
         use_breakeven=cfg.get("use_breakeven",False),
         breakeven_r=cfg.get("breakeven_r",0.5),
         time_sessions=time_sessions,
-        session_policy=session_policy
+        session_policy=session_policy,
+        cfg=cfg,
     )
 
     # Walk-Forward（簡易）
     wf_df, wf_rate = walk_forward(
-        low,
+        df,
         cfg,
         n_splits=cfg.get("wf_splits",7),
         ema_fast=cfg.get("ema_fast",9),
         ema_slow=cfg.get("ema_slow",21),
         vol_ratio_th=cfg.get("vol_ratio_th",1.5),
-        session_start=cfg.get("session_start","09:00"),
-        session_end=cfg.get("session_end","15:00"),
-        stop_pts=cfg.get("stop_pts",100.0),
-        tp_pts=cfg.get("tp_pts",200.0),
+        stop_pts=cfg.get("stop_pts",1.0),
+        tp_pts=cfg.get("tp_pts",2.0),
         point_value=cfg.get("point_value",1.0),
-        direction=cfg.get("direction","long"),
         spread_pts=cfg.get("spread_pts",0.0),
         slippage_pts=cfg.get("slippage_pts",0.0),
         commission_value=cfg.get("commission_value",0.0),
+        direction=cfg.get("direction","long"),
+        use_mtf=cfg.get("use_mtf",True),
+        higher_tf_mode=cfg.get("higher_tf_mode","resample"),
+        higher_tf_rule=cfg.get("higher_tf_rule","60T"),
+        higher_tf_csv_dir=cfg.get("higher_tf_csv_dir",None),
+        start_date=cfg.get("start_date",None),
+        end_date=cfg.get("end_date",None),
+        tz=cfg.get("tz","UTC"),
+        session_start=cfg.get("session_start","09:00"),
+        session_end=cfg.get("session_end","15:00"),
         friday_close_time=cfg.get("friday_close_time","15:05"),
         use_atr_tp=cfg.get("use_atr_tp",False),
         atr_multiplier=cfg.get("atr_multiplier",2.0),
-        news_exclusion_periods=news_exclusion_periods,
+        exclude_news=cfg.get("exclude_news",False),
+        news_exclusion_minutes=cfg.get("news_exclusion_minutes",30),
+        news_exclude_csv=cfg.get("news_exclude_csv",None),
+        use_slope_filter=cfg.get("use_slope_filter",False),
         use_breakeven=cfg.get("use_breakeven",False),
         breakeven_r=cfg.get("breakeven_r",0.5),
         time_sessions=time_sessions,
-        session_policy=session_policy
+        session_policy=session_policy,
     )
 
     # タイムスタンプ付きファイル名生成
@@ -711,6 +961,11 @@ def main():
 
     metrics_all = dict(metrics)
     metrics_all["WF_PassRate"] = wf_rate
+    
+    # ブロック内訳をメトリクスに追加
+    if 'cnt' in globals():
+        metrics_all.update(cnt)
+    
     with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump(metrics_all, f, ensure_ascii=False, indent=2)
 
