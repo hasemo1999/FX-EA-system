@@ -1,0 +1,56 @@
+{
+  "stocks": [
+    {
+      "code": "418A",
+      "name": "ウリドキ",
+      "sector": "情報・通信業",
+      "business_description": "リユースプラットフォーム運営。買取比較サイト「ウリドキ」を展開",
+      "analysis_date": "2026-03-08",
+      "rank_label": "1位",
+      "tagline": "全部乗せ最強",
+      "fundamental": {
+        "revenue_history": [598, 1519, 2150, 3000],
+        "revenue_labels": ["FY2022", "FY2023", "FY2024予", "FY2025予"],
+        "operating_profit_history": [48, 175, 340, 500],
+        "operating_profit_labels": ["FY2022", "FY2023", "FY2024予", "FY2025予"],
+        "roe": 107.0,
+        "roa": 35.3,
+        "equity_ratio": 55.5,
+        "employees": 16,
+        "revenue_per_employee": 9500
+      },
+      "growth": {
+        "shikiho_revision_rate": 70.0,
+        "operating_profit_growth": 94.0,
+        "revenue_growth": 41.5,
+        "forward2_per": 11.15,
+        "peg_ratio": null
+      },
+      "technical": {
+        "current_price": null,
+        "ma25": null,
+        "ma75": 915,
+        "golden_cross_25_75": true,
+        "price_vs_ma25": "above",
+        "price_vs_ma75": "below",
+        "technical_score": 4,
+        "entry_trigger": "915円超えで即行動",
+        "technical_note": "25MAゴールデンクロス形成済み、75MA(915円)ブレイク目前"
+      },
+      "ipo_info": {
+        "listing_market": "グロース"
+      },
+      "investment_thesis": "超少人数で高収益のリユースプラットフォーム。売上2年で5倍、利益10倍の爆発的成長",
+      "risk_factors": [
+        "時価総額が小さく流動性リスク",
+        "競合（メルカリ等）の動向",
+        "従業員数極少で属人性リスク"
+      ],
+      "catalysts": [
+        "四季報大幅上方修正サプライズ (+70%)",
+        "来々期PER 11.15倍で成長率対比割安",
+        "75MA(915円)ブレイクでテクニカル転換"
+      ]
+    }
+  ]
+}
