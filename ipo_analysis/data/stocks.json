@@ -4,52 +4,109 @@
       "code": "418A",
       "name": "ウリドキ",
       "sector": "情報・通信業",
-      "business_description": "リユースプラットフォーム運営。買取比較サイト「ウリドキ」を展開",
+      "business_description": "C2B買取プラットフォーム「ウリドキ」及びリユース特化WEBメディア「ウリドキプラス」を運営。個人とリユース業者をマッチング",
       "analysis_date": "2026-03-08",
       "rank_label": "1位",
       "tagline": "全部乗せ最強",
+
       "fundamental": {
-        "revenue_history": [598, 1519, 2150, 3000],
-        "revenue_labels": ["FY2022", "FY2023", "FY2024予", "FY2025予"],
-        "operating_profit_history": [48, 175, 340, 500],
-        "operating_profit_labels": ["FY2022", "FY2023", "FY2024予", "FY2025予"],
-        "roe": 107.0,
-        "roa": 35.3,
-        "equity_ratio": 55.5,
+        "revenue_history": [100, 179, 334, 598, 1519, 2157],
+        "revenue_labels": ["FY2021", "FY2022", "FY2023", "FY2024", "FY2025", "FY2026予"],
+        "operating_profit_history": [-42, -29, 39, 48, 175, 339],
+        "operating_profit_labels": ["FY2021", "FY2022", "FY2023", "FY2024", "FY2025", "FY2026予"],
+        "net_profit_history": [-46, -33, 46, 65, 215, 242],
+        "net_profit_labels": ["FY2021", "FY2022", "FY2023", "FY2024", "FY2025", "FY2026予"],
+
+        "roe": 52.7,
+        "roa": 22.35,
+        "equity_ratio": 58.7,
         "employees": 16,
-        "revenue_per_employee": 9500
+        "avg_age": 32.6,
+        "avg_tenure_years": 1.6,
+        "avg_salary": 510.6,
+        "revenue_per_employee": 9494,
+
+        "total_assets": 700,
+        "eps_actual": 56.52,
+        "bps": 60.8,
+
+        "operating_cf": null,
+        "investing_cf": null,
+        "free_cf": null
       },
+
       "growth": {
         "shikiho_revision_rate": 70.0,
-        "operating_profit_growth": 94.0,
-        "revenue_growth": 41.5,
+        "operating_profit_growth": 93.7,
+        "revenue_growth": 42.0,
+        "forward_per": 15.7,
         "forward2_per": 11.15,
-        "peg_ratio": null
+        "peg_ratio": null,
+        "eps_growth": 12.3,
+        "market_cap": 3800,
+        "psr": 1.76,
+
+        "revenue_cagr_3y": 81.3,
+        "revenue_yoy_fy2024": 79.3,
+        "revenue_yoy_fy2025": 153.8,
+        "op_profit_yoy_fy2025": 262.6,
+        "net_profit_yoy_fy2025": 230.8
       },
+
       "technical": {
-        "current_price": null,
+        "current_price": 995,
         "ma25": null,
         "ma75": 915,
+        "ma200": null,
         "golden_cross_25_75": true,
         "price_vs_ma25": "above",
-        "price_vs_ma75": "below",
+        "price_vs_ma75": "above",
+        "avg_volume_20d": null,
+        "volume_ratio": null,
+        "rsi_14": null,
+        "macd": null,
+        "macd_signal": null,
+        "support_price": 822,
+        "resistance_price": 1000,
+        "entry_trigger": "915円超え確認済み → 次の節目1,000円ブレイクで追撃",
         "technical_score": 4,
-        "entry_trigger": "915円超えで即行動",
-        "technical_note": "25MAゴールデンクロス形成済み、75MA(915円)ブレイク目前"
+        "technical_note": "25MAゴールデンクロス形成済み。株価995円で75MA(915円)をブレイク済み。次のターゲットは心理的節目1,000円、その上は上場来高値1,250円",
+
+        "price_history_note": "上場来高値1,250円(2025/11/10)、上場来安値610円(2025/10/07)。直近822円(2026/2/26)から反発中"
       },
+
       "ipo_info": {
-        "listing_market": "グロース"
+        "listing_date": "2025-10-07",
+        "listing_market": "名証ネクスト",
+        "offer_price": 1200,
+        "initial_price": 1290,
+        "initial_return": 7.5,
+        "lockup_expiry": "2026-04-04 (180日)",
+        "underwriter": "Jトラストグローバル証券",
+
+        "shares_outstanding": null,
+        "ipo_market_cap": 2509,
+        "founder": "木暮康雄",
+        "founder_ownership_pct": 50.62,
+        "founder_note": "木暮康雄氏 + 資産管理会社パズー(株)で50.62%保有"
       },
-      "investment_thesis": "超少人数で高収益のリユースプラットフォーム。売上2年で5倍、利益10倍の爆発的成長",
+
+      "investment_thesis": "超少人数(16名)で売上15億の高収益C2Bリユースプラットフォーム。売上CAGR 81%、営業利益FY2025は前期比+263%の爆発的成長。リユース市場拡大+インフレ・円安追い風",
       "risk_factors": [
-        "時価総額が小さく流動性リスク",
-        "競合（メルカリ等）の動向",
-        "従業員数極少で属人性リスク"
+        "大手2社への売上依存 (全体の58.1%)",
+        "時価総額38億で流動性リスク（名証ネクスト）",
+        "従業員16名で属人性リスク（代表・木暮氏依存）",
+        "ウリドキプラスがSEO依存（検索アルゴリズム変更リスク）",
+        "ロックアップ解除 2026/4/4（180日）で売圧リスク",
+        "PBR 9.70倍と資産面では割高"
       ],
       "catalysts": [
         "四季報大幅上方修正サプライズ (+70%)",
         "来々期PER 11.15倍で成長率対比割安",
-        "75MA(915円)ブレイクでテクニカル転換"
+        "75MA(915円)ブレイク済み → テクニカル転換完了",
+        "FY2026予 営業利益339M (+93.7%) の高成長継続",
+        "リユース市場構造的拡大（インフレ・サステナビリティ）",
+        "売上CAGR 3年 81.3% の驚異的成長トラック"
       ]
     }
   ]

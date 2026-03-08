@@ -19,9 +19,21 @@ class FundamentalData:
     roa: Optional[float] = None          # 総資産利益率 (%)
     equity_ratio: Optional[float] = None  # 自己資本比率 (%)
 
+    # 純利益（百万円）
+    net_profit_history: list[float] = field(default_factory=list)
+    net_profit_labels: list[str] = field(default_factory=list)
+
     # 企業効率
     employees: Optional[int] = None           # 従業員数
+    avg_age: Optional[float] = None           # 平均年齢
+    avg_tenure_years: Optional[float] = None  # 平均勤続年数
+    avg_salary: Optional[float] = None        # 平均年収（万円）
     revenue_per_employee: Optional[float] = None  # 1人当たり売上高（万円）
+
+    # 1株指標
+    total_assets: Optional[float] = None      # 総資産（百万円）
+    eps_actual: Optional[float] = None        # EPS実績（円）
+    bps: Optional[float] = None               # BPS（円）
 
     # 財務安全性
     current_ratio: Optional[float] = None     # 流動比率 (%)
@@ -89,6 +101,11 @@ class IPOInfo:
     initial_return: Optional[float] = None      # 初値騰落率 (%)
     lockup_expiry: Optional[str] = None         # ロックアップ解除日
     underwriter: Optional[str] = None           # 主幹事
+    shares_outstanding: Optional[int] = None    # 発行済株式数
+    ipo_market_cap: Optional[float] = None      # IPO時時価総額（百万円）
+    founder: Optional[str] = None               # 創業者
+    founder_ownership_pct: Optional[float] = None  # 創業者持株比率 (%)
+    founder_note: Optional[str] = None          # 創業者メモ
 
 
 @dataclass

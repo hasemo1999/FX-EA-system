@@ -56,7 +56,36 @@ class ReportGenerator:
             lines.append(f"  営業利益推移: {op_str}")
             lines.append(f"                ({lbl_str})")
 
+        # 純利益推移
+        if entry.fundamental.net_profit_history:
+            np_str = " → ".join(
+                f"{v:,.0f}M" for v in entry.fundamental.net_profit_history
+            )
+            lbl_str = " → ".join(entry.fundamental.net_profit_labels)
+            lines.append(f"  純利益推移:   {np_str}")
+            lines.append(f"                ({lbl_str})")
+
         lines.append("")
+
+        # 1株指標・企業効率
+        fund = entry.fundamental
+        detail_lines = []
+        if fund.eps_actual is not None:
+            detail_lines.append(f"  EPS: {fund.eps_actual:.2f}円")
+        if fund.bps is not None:
+            detail_lines.append(f"  BPS: {fund.bps:.1f}円")
+        if fund.total_assets is not None:
+            detail_lines.append(f"  総資産: {fund.total_assets:,.0f}百万円")
+        if fund.employees is not None:
+            detail_lines.append(f"  従業員数: {fund.employees}名")
+        if fund.avg_age is not None:
+            detail_lines.append(f"  平均年齢: {fund.avg_age}歳")
+        if fund.avg_salary is not None:
+            detail_lines.append(f"  平均年収: {fund.avg_salary:.1f}万円")
+        if detail_lines:
+            for dl in detail_lines:
+                lines.append(dl)
+            lines.append("")
 
         # 各スコア
         for key, detail in fa["scores"].items():
@@ -112,6 +141,10 @@ class ReportGenerator:
             lines.append(f"  25MA: {entry.technical.ma25:,.0f}円")
         if entry.technical.ma75:
             lines.append(f"  75MA: {entry.technical.ma75:,.0f}円")
+        if entry.technical.support_price:
+            lines.append(f"  サポート: {entry.technical.support_price:,.0f}円")
+        if entry.technical.resistance_price:
+            lines.append(f"  レジスタンス: {entry.technical.resistance_price:,.0f}円")
         lines.append("")
 
         for sig in tech_detail["signals"]:
@@ -157,6 +190,12 @@ class ReportGenerator:
                 lines.append(f"  初値騰落率: {ipo.initial_return:+.1f}%")
             if ipo.lockup_expiry:
                 lines.append(f"  ロックアップ解除: {ipo.lockup_expiry}")
+            if ipo.underwriter:
+                lines.append(f"  主幹事: {ipo.underwriter}")
+            if ipo.ipo_market_cap:
+                lines.append(f"  IPO時時価総額: {ipo.ipo_market_cap:,.0f}百万円")
+            if ipo.founder_note:
+                lines.append(f"  創業者: {ipo.founder_note}")
             lines.append("")
 
         lines.append("=" * 70)
