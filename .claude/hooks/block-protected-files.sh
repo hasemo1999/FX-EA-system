@@ -2,8 +2,7 @@
 # PreToolUse hook: Block edits to protected files
 # Matcher: Edit|Write
 #
-# Prevents modification of lock files, generated code, and CI config.
-# Customize PROTECTED_PATTERNS for your project.
+# Prevents modification of production config, lock files, and generated code.
 
 set -euo pipefail
 
@@ -29,10 +28,31 @@ deny() {
   exit 0
 }
 
-# Lock files — should be managed by package managers only
+# Production config — must not be edited directly
 case "$FILE_PATH" in
-  */pnpm-lock.yaml|*/package-lock.json|*/yarn.lock|*/Gemfile.lock|*/poetry.lock|*/Cargo.lock)
-    deny "Blocked: lock files should not be edited manually. Run the package manager instead."
+  *backtest_config_production.json)
+    deny "Blocked: 本番設定ファイルの直接編集は禁止です。別ファイル(backtest_config_test_*.json)で検証してください。"
+    ;;
+esac
+
+# Secrets files
+case "$FILE_PATH" in
+  *slack_webhook.txt|*.env|*.env.*|*.key|*.pem)
+    deny "Blocked: シークレットファイルの編集はClaude Codeでは行わないでください。"
+    ;;
+esac
+
+# .serena memory files — historical records should not be modified
+case "$FILE_PATH" in
+  *.serena/memories/*)
+    deny "Blocked: .serena/memories/ は過去の記録です。新しいファイルを追加してください。"
+    ;;
+esac
+
+# Lock files
+case "$FILE_PATH" in
+  */pnpm-lock.yaml|*/package-lock.json|*/yarn.lock|*/poetry.lock)
+    deny "Blocked: lock files should not be edited manually."
     ;;
 esac
 
@@ -42,10 +62,5 @@ case "$FILE_PATH" in
     deny "Blocked: this is a generated file. Edit the source instead."
     ;;
 esac
-
-# Migrations already applied (customize path as needed)
-if echo "$FILE_PATH" | grep -qE 'migrations/[0-9]{4}.*\.(sql|ts|js)$'; then
-  deny "Blocked: do not edit existing migrations. Create a new migration instead."
-fi
 
 exit 0

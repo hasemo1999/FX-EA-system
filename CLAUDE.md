@@ -1,5 +1,9 @@
 # FX-EA-System プロジェクト指示書
 
+プロジェクトの概要は @README.md を参照。
+最適化の試行錯誤の記録は @.serena/memories/backtest_optimization_journey.md を参照。
+本番ATRプロファイルの詳細は @.serena/memories/atrq_production_2025-08-15.md を参照。
+
 ## なぜこの構成なのか
 
 - EMA 9/21クロス戦略を採用した理由：FXではシンプルなクロスオーバーが安定して機能し、過学習リスクが低い

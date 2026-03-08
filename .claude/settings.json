@@ -1,5 +1,6 @@
 {
   "permissions": {
+    "defaultMode": "default",
     "allow": [
       "Read",
       "Glob",
@@ -8,28 +9,64 @@
       "Bash(python atrq_grid_scan.py *)",
       "Bash(python analyze_atr_gap.py *)",
       "Bash(python session_filter.py *)",
+      "Bash(python slack_daily_summary.py *)",
       "Bash(pip install -r requirements.txt)",
       "Bash(git status)",
       "Bash(git diff *)",
       "Bash(git log *)",
+      "Bash(git branch *)",
+      "Bash(git checkout *)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(ls *)"
+      "Bash(ls *)",
+      "Bash(* --version)",
+      "Bash(* --help)"
     ],
     "deny": [
       "Bash(rm -rf *)",
       "Bash(git push --force *)",
-      "Bash(git reset --hard *)"
+      "Bash(git reset --hard *)",
+      "Bash(curl * | bash*)",
+      "Bash(wget * | bash*)",
+      "Read(.env*)",
+      "Read(slack_webhook.txt)",
+      "Read(**/*.key)",
+      "Read(**/*secret*)",
+      "Edit(.env*)",
+      "Edit(slack_webhook.txt)"
     ]
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -q 'backtest_config_production.json'; then echo '⚠️ 本番設定ファイルの直接編集は禁止です。別ファイルで検証してください。' >&2; exit 1; fi"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-dangerous-commands.sh",
+            "statusMessage": "セキュリティチェック中..."
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-protected-files.sh",
+            "statusMessage": "保護ファイルチェック中..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/lint-on-save.sh",
+            "timeout": 30
           }
         ]
       }

@@ -1,33 +1,27 @@
-# Testing Conventions
+---
+description: バックテスト検証ルール
+globs: "*.py,backtest_config*.json"
+---
 
-## Structure
+# バックテスト検証ルール
 
-- Test files next to source: `foo.ts` → `foo.test.ts`
-- Use `describe` for grouping, `it` for individual cases
-- Name tests as: `it('should <expected behavior> when <condition>')`
+## 新しいパラメータや戦略を検証するとき
 
-## What to Test
+- 必ず別のconfigファイル（`backtest_config_test_*.json`）を作って検証する
+- Walk-Forward 7分割で OOS PF ≥ 1.0 を確認するまで本番に反映しない
+- 結果は以下のKPIで評価する:
+  - Profit Factor（目標: ≥ 1.30）
+  - MaxDD（目標: ≤ 10%）
+  - Walk-Forward合格率（目標: ≥ 70%）
+  - 取引数（最低150トレード以上で統計的に有意）
 
-- Happy path: expected inputs produce expected outputs
-- Edge cases: empty inputs, boundary values, null/undefined
-- Error cases: invalid inputs, network failures, timeouts
-- Integration points: API calls, DB queries (use mocks)
+## テストデータ
 
-## What NOT to Test
+- バックテスト期間: 2023-01-01 〜 2024-12-31（24ヶ月）
+- 本番データ（CSVファイル）はgitにコミットしない
+- コスト（スプレッド・スリッページ・手数料）を省略したテストは無意味
 
-- Implementation details (private methods, internal state)
-- Third-party library internals
-- Trivial getters/setters
+## 比較基準
 
-## Mocking
-
-- Mock at module boundaries, not internal functions
-- Prefer dependency injection over module mocking
-- Reset mocks in `beforeEach` or `afterEach`
-- Use `vi.fn()` (Vitest) or `jest.fn()` for spy/stub
-
-## Test Data
-
-- Use factory functions for test data, not raw objects
-- Keep test data minimal: only set fields relevant to the test
-- Never use production data or real credentials in tests
+- 現在の本番プロファイル（Profile B: lo=0.30, hi=0.72）との差分を必ず報告
+- 改善が僅差（PF差 < 0.01）の場合は切替を推奨しない（ノイズの可能性）
