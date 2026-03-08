@@ -1,0 +1,70 @@
+{
+  "generated_at": "2026-03-08T11:01:24.366984",
+  "total_stocks": 1,
+  "rankings": [
+    {
+      "code": "418A",
+      "name": "ウリドキ",
+      "fundamental": {
+        "scores": {
+          "roe": {
+            "value": 52.7,
+            "score": 100,
+            "label": "52.7%"
+          },
+          "roa": {
+            "value": 22.35,
+            "score": 100,
+            "label": "22.4%"
+          },
+          "equity_ratio": {
+            "value": 58.7,
+            "score": 80,
+            "label": "58.7%"
+          },
+          "revenue_per_employee": {
+            "value": 9494,
+            "score": 100,
+            "label": "9,494万円"
+          },
+          "revenue_cagr": {
+            "value": 84.82896391499777,
+            "score": 100,
+            "label": "84.8%"
+          }
+        },
+        "composite": 96.9
+      },
+      "growth": {
+        "scores": {
+          "shikiho_revision_rate": {
+            "value": 70.0,
+            "score": 100,
+            "label": "+70%"
+          },
+          "operating_profit_growth": {
+            "value": 93.7,
+            "score": 100,
+            "label": "+94%"
+          },
+          "revenue_growth": {
+            "value": 42.0,
+            "score": 100,
+            "label": "+42%"
+          },
+          "forward2_per": {
+            "value": 11.15,
+            "score": 100,
+            "label": "11.15倍"
+          }
+        },
+        "composite": 100.0
+      },
+      "technical_score": 80,
+      "overall_score": 92.9,
+      "rank_label": "1位",
+      "tagline": "全部乗せ最強",
+      "rank": 1
+    }
+  ]
+}
