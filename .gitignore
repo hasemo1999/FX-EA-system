@@ -62,3 +62,4 @@ CLAUDE.local.md
 slack_webhook.txt
 .env
 *.key
+.claude/logs/
