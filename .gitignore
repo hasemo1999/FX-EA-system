@@ -53,3 +53,12 @@ C:\Users\bnr39\OneDrive\EAデータ　CSV\バックテスト結果\*
 # Temporary files
 *.tmp
 *.temp
+
+# Claude Code local settings (personal, not shared)
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Secrets
+slack_webhook.txt
+.env
+*.key
