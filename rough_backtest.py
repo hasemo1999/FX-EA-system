@@ -1006,5 +1006,23 @@ def main():
     print(f"[OK] Created folder: {test_folder_name}")
     print(f"[OK] Wrote: {trades_path}, {equity_path}, {metrics_path}, {wf_path}, {summary_path}")
 
+    # --- Google Drive アップロード（オプション） ---
+    if cfg.get("gdrive_upload", False):
+        try:
+            from gdrive_utils import GDriveConfig, DriveClient
+            gdcfg = GDriveConfig.load(cfg.get("gdrive_config_path"))
+            dc = DriveClient(gdcfg)
+            upload_targets = [trades_path, equity_path, metrics_path, summary_path]
+            if len(trades) > 0:
+                upload_targets.extend([fig1_path, fig2_path])
+            if wf_path and os.path.exists(wf_path):
+                upload_targets.append(wf_path)
+            for fpath in upload_targets:
+                if os.path.exists(fpath):
+                    dc.upload_file(fpath, folder_id=gdcfg.folder_id)
+            print("[OK] Google Driveへアップロード完了")
+        except Exception as e:
+            logger.error(f"Google Driveアップロード失敗: {e}")
+
 if __name__ == "__main__":
     main()

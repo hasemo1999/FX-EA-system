@@ -3,3 +3,9 @@ numpy>=1.21.0
 matplotlib>=3.5.0
 pytz>=2022.1
 
+# Google Drive / Sheets 連携
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-httplib2>=0.1.1
+gspread>=5.12.0
+

@@ -141,6 +141,25 @@ def main() -> None:
             logger.error(f"Slack投稿失敗: {err}")
             return
         logger.info("Slack投稿完了")
+
+        # --- Google Sheets 連携（オプション） ---
+        sheet_id = os.environ.get("GDRIVE_SHEET_ID")
+        if sheet_id:
+            try:
+                from gdrive_utils import GDriveConfig, SheetsClient
+                gdcfg = GDriveConfig.from_env()
+                sc = SheetsClient(gdcfg)
+                sc.append_rows([[
+                    datetime.now().isoformat(),
+                    metrics.get("PF", 0),
+                    metrics.get("MaxDD", 0),
+                    metrics.get("WF_PassRate", 0),
+                    metrics.get("Trades", 0),
+                    metrics.get("atrq_reject_rate", 0),
+                ]], spreadsheet_id=sheet_id, worksheet_name="DailySummary")
+                logger.info("Google Sheetsへ追記完了")
+            except Exception as e:
+                logger.error(f"Google Sheets連携失敗: {e}")
     except Exception as e:
         logger.error(f"処理失敗: {e}")
 

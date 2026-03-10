@@ -53,3 +53,9 @@ C:\Users\bnr39\OneDrive\EAデータ　CSV\バックテスト結果\*
 # Temporary files
 *.tmp
 *.temp
+
+# Google Drive credentials & sync state
+sa_key.json
+*-service-account.json
+.gdrive_sync_manifest.json
+gdrive_config.json

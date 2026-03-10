@@ -1,0 +1,8 @@
+{
+    "sa_key_path": "~/.config/gdrive/sa_key.json",
+    "folder_id": "YOUR_GOOGLE_DRIVE_FOLDER_ID",
+    "sheet_id": "YOUR_GOOGLE_SHEETS_SPREADSHEET_ID",
+    "sync_root": "./backtest_output",
+    "sync_direction": "upload",
+    "max_retries": 3
+}
